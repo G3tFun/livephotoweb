@@ -1091,6 +1091,20 @@ function mp4box(type, content) {
   return cat(u32be(c.length + 8), bytesOf(type), c);
 }
 
+// ---- Мини-проверка: реально ли байты needle попали в blob ----
+async function blobContains(blob, needle) {
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  const bytes = typeof needle === 'string' ? bytesOf(needle) : needle;
+  outer:
+  for (let i = 0; i <= buf.length - bytes.length; i++) {
+    for (let j = 0; j < bytes.length; j++) {
+      if (buf[i + j] !== bytes[j]) continue outer;
+    }
+    return true;
+  }
+  return false;
+}
+
 // EXIF MakerNote (Apple): "Apple iOS\0" + 4 байта версии + мини-TIFF с тегом 0x11
 function buildAppleMakerNote(uuid) {
   const header = cat(bytesOf('Apple iOS'), [0], [0, 0, 0, 1]);      // 14 байт
@@ -1263,6 +1277,18 @@ async function saveShot() {
         embedContentIdentifierJPEG(s.photo, id),
         embedContentIdentifierMOV(videoBlob, id),
       ]);
+
+      // ---- мини-подтверждение: сам браузер перечитывает то, что сейчас сохранит ----
+      const [jpegOk, movOk] = await Promise.all([
+        blobContains(photo, id),
+        blobContains(video, 'com.apple.quicktime.content.identifier'),
+      ]);
+      alert(
+        'ID: ' + id +
+        '\nJPEG содержит UUID: ' + (jpegOk ? 'ДА ✅' : 'НЕТ ❌ (' + photo.size + ' байт, было ' + s.photo.size + ')') +
+        '\nMOV содержит ключ:  ' + (movOk ? 'ДА ✅' : 'НЕТ ❌ (' + video.size + ' байт, было ' + videoBlob.size + ')')
+      );
+
       saveBlob(photo, base + '.jpg');
       setTimeout(() => saveBlob(video, base + '.mov'), 400);       // то же имя базы + .mov — как у самого iPhone
     } else {
