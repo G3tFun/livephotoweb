@@ -1052,20 +1052,174 @@ els.stage.addEventListener('touchcancel', release);
 els.stage.addEventListener('contextmenu', (e) => e.preventDefault());
 els.stage.addEventListener('dragstart', (e) => e.preventDefault());
 
+/* ==========================================================
+   Настоящий Apple Live Photo: Content Identifier
+   ----------------------------------------------------------
+   Чтобы Фото на iPhone/iPad/Mac распознали пару JPEG+видео как
+   Live Photo, оба файла должны содержать ОДИН и тот же UUID:
+   - в JPEG — в EXIF MakerNote (Apple, тег 0x11 ContentIdentifier);
+   - в видео — в верхнеуровневых QuickTime-метаданных moov/meta
+     (ключ com.apple.quicktime.content.identifier).
+   Это ровно тот механизм, которым пользуется сама камера iPhone
+   (см. открытые реализации вроде RhetTbull/makelive). Метка времени
+   «какой кадр видео = фото» (com.apple.quicktime.still-image-time)
+   здесь не пишется — это отдельный трек метаданных внутри видео,
+   и без него Фото всё равно связывают пару по идентификатору, но
+   опорным кадром берут начало ролика.
+   Работает только если видео реально в MP4/MOV (кодек avc1/H.264,
+   контейнер вида ftyp+mdat+moov) — WebM Apple не понимает в принципе,
+   для него делаем как раньше, без метаданных.
+   ========================================================== */
+function newAssetId() {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, '0'));
+  return (h.slice(0, 4).join('') + '-' + h.slice(4, 6).join('') + '-' + h.slice(6, 8).join('') + '-'
+    + h.slice(8, 10).join('') + '-' + h.slice(10, 16).join('')).toUpperCase();
+}
+const u16be = (n) => [(n >>> 8) & 255, n & 255];
+const u32be = (n) => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+const bytesOf = (s) => Array.from(s, (c) => c.charCodeAt(0));
+function cat(...parts) {
+  const arrs = parts.map((p) => (p instanceof Uint8Array ? p : new Uint8Array(p)));
+  const out = new Uint8Array(arrs.reduce((n, a) => n + a.length, 0));
+  let o = 0; for (const a of arrs) { out.set(a, o); o += a.length; }
+  return out;
+}
+function mp4box(type, content) {
+  const c = content instanceof Uint8Array ? content : cat(content);
+  return cat(u32be(c.length + 8), bytesOf(type), c);
+}
+
+// EXIF MakerNote (Apple): "Apple iOS\0" + 4 байта версии + мини-TIFF с тегом 0x11
+function buildAppleMakerNote(uuid) {
+  const header = cat(bytesOf('Apple iOS'), [0], [0, 0, 0, 1]);      // 14 байт
+  const tiff = cat(bytesOf('MM'), [0, 0x2A], u32be(22));            // мини-TIFF header, IFD @22
+  const idStr = cat(bytesOf(uuid), [0]);                             // ASCII + NUL
+  const entry = cat(u16be(0x0011), u16be(2), u32be(idStr.length), u32be(40)); // ContentIdentifier
+  const ifd = cat(u16be(1), entry, u32be(0));
+  return cat(header, tiff, ifd, idStr);                              // header(14)+tiff(8)+ifd(18)+idStr
+}
+// Полноценный EXIF-блок (TIFF) с IFD0 → ExifIFD → MakerNote
+function buildExifTiff(uuid) {
+  const maker = buildAppleMakerNote(uuid);
+  const entry = (tag, type, count, val) => cat(u16be(tag), u16be(type), u32be(count), u32be(val));
+  const ifd0 = cat(u16be(1), entry(0x8769, 4, 1, 26), u32be(0));     // ExifIFD @26
+  const exifIfd = cat(u16be(1), entry(0x927C, 7, maker.length, 44), u32be(0)); // MakerNote @44
+  const header = cat(bytesOf('MM'), [0, 0x2A], u32be(8));
+  return cat(header, ifd0, exifIfd, maker);
+}
+async function embedContentIdentifierJPEG(blob, uuid) {
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  if (buf[0] !== 0xFF || buf[1] !== 0xD8) return blob;               // не JPEG — не трогаем
+  const tiff = buildExifTiff(uuid);
+  const payload = cat(bytesOf('Exif'), [0, 0], tiff);
+  const seg = cat([0xFF, 0xE1], u16be(payload.length + 2), payload);
+  return new Blob([cat(buf.subarray(0, 2), seg, buf.subarray(2))], { type: 'image/jpeg' });
+}
+
+// Верхнеуровневый moov/meta с ключом com.apple.quicktime.content.identifier
+function buildContentIdMeta(uuid) {
+  const key = 'com.apple.quicktime.content.identifier';
+  const hdlr = mp4box('hdlr', cat(u32be(0), u32be(0), bytesOf('mdta'), new Uint8Array(12), [0]));
+  const keyEntry = cat(u32be(key.length + 8), bytesOf('mdta'), bytesOf(key));
+  const keys = mp4box('keys', cat(u32be(0), u32be(1), keyEntry));
+  const dataAtom = mp4box('data', cat(u32be(1), u32be(0), bytesOf(uuid)));   // тип 1 = UTF-8
+  const item = mp4box(String.fromCharCode(0, 0, 0, 1), dataAtom);            // индекс ключа = 1
+  const ilst = mp4box('ilst', item);
+  return mp4box('meta', cat(u32be(0), hdlr, keys, ilst));
+}
+function readMp4Boxes(buf, start, end) {
+  const out = []; let o = start;
+  while (o + 8 <= end) {
+    const size0 = ((buf[o] << 24) | (buf[o + 1] << 16) | (buf[o + 2] << 8) | buf[o + 3]) >>> 0;
+    const type = String.fromCharCode(buf[o + 4], buf[o + 5], buf[o + 6], buf[o + 7]);
+    let headerLen = 8, size = size0;
+    if (size0 === 0) size = end - o; else if (size0 === 1) break;    // 64-битный размер не поддерживаем — прерываем разбор
+    out.push({ type, start: o, headerLen, size });
+    if (size <= 0) break;
+    o += size;
+  }
+  return out;
+}
+function patchChunkOffsets(bytes, start, end, delta) {
+  const walk = (s, e) => {
+    for (const b of readMp4Boxes(bytes, s, e)) {
+      if (b.type === 'stco' || b.type === 'co64') {
+        const wide = b.type === 'co64';
+        let o = b.start + b.headerLen + 4;
+        const count = ((bytes[o] << 24) | (bytes[o + 1] << 16) | (bytes[o + 2] << 8) | bytes[o + 3]) >>> 0; o += 4;
+        for (let i = 0; i < count; i++) {
+          if (wide) {
+            const lo = ((bytes[o + 4] << 24) | (bytes[o + 5] << 16) | (bytes[o + 6] << 8) | bytes[o + 7]) >>> 0;
+            const nv = lo + delta;
+            bytes[o + 4] = (nv >>> 24) & 255; bytes[o + 5] = (nv >>> 16) & 255; bytes[o + 6] = (nv >>> 8) & 255; bytes[o + 7] = nv & 255;
+            o += 8;
+          } else {
+            const off = ((bytes[o] << 24) | (bytes[o + 1] << 16) | (bytes[o + 2] << 8) | bytes[o + 3]) >>> 0;
+            const nv = (off + delta) >>> 0;
+            bytes[o] = (nv >>> 24) & 255; bytes[o + 1] = (nv >>> 16) & 255; bytes[o + 2] = (nv >>> 8) & 255; bytes[o + 3] = nv & 255;
+            o += 4;
+          }
+        }
+      } else if (b.type === 'trak' || b.type === 'mdia' || b.type === 'minf' || b.type === 'stbl') {
+        walk(b.start + b.headerLen, b.start + b.size);
+      }
+    }
+  };
+  walk(start, end);
+}
+async function embedContentIdentifierMOV(blob, uuid) {
+  try {
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    const top = readMp4Boxes(buf, 0, buf.length);
+    const moov = top.find((b) => b.type === 'moov');
+    const mdat = top.find((b) => b.type === 'mdat');
+    if (!moov) return blob;
+    const metaAtom = buildContentIdMeta(uuid);
+    const delta = metaAtom.length;
+    const head = buf.slice(0, moov.start + moov.size);
+    if (!(mdat && mdat.start < moov.start)) patchChunkOffsets(head, moov.start, moov.start + moov.size, delta);
+    const newSize = moov.size + delta;
+    head[moov.start] = (newSize >>> 24) & 255; head[moov.start + 1] = (newSize >>> 16) & 255;
+    head[moov.start + 2] = (newSize >>> 8) & 255; head[moov.start + 3] = newSize & 255;
+    const tail = buf.slice(moov.start + moov.size);
+    return new Blob([cat(head, metaAtom, tail)], { type: blob.type || 'video/mp4' });
+  } catch (e) {
+    console.error('Live Photo: не удалось встроить метаданные в видео', e);
+    return blob;
+  }
+}
+
 function saveBlob(blob, name) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
-function saveShot() {
+async function saveShot() {
   const s = state.shots[V.i]; if (!s) return;
   const d = s.time, p = (n) => String(n).padStart(2, '0');
   const stamp = d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
-  saveBlob(s.photo, 'IMG_' + stamp + '.jpg');
-  if (s.clip) {
-    const ext = s.clip.rec.mime.includes('mp4') ? 'mp4' : 'webm';
-    setTimeout(() => saveBlob(s.clip.rec.blob, 'IMG_' + stamp + '_live.' + ext), 400);
+  const base = 'IMG_' + stamp;
+
+  const isMov = !!(s.clip && s.clip.rec.mime.includes('mp4'));       // настоящий Live Photo возможен только для MP4/MOV
+  if (s.clip && !isMov) toast('Видео записано в WebM — Apple такое не поймёт как Live Photo. Для этого нужен Safari (кодек H.264/MP4).', 4200);
+
+  if (s.clip && isMov) {
+    const id = newAssetId();
+    const [photo, video] = await Promise.all([
+      embedContentIdentifierJPEG(s.photo, id),
+      embedContentIdentifierMOV(s.clip.rec.blob, id),
+    ]);
+    saveBlob(photo, base + '.jpg');
+    setTimeout(() => saveBlob(video, base + '.mov'), 400);            // то же имя базы + .mov — как у самого iPhone
+  } else {
+    saveBlob(s.photo, base + '.jpg');
+    if (s.clip) {
+      const ext = s.clip.rec.mime.includes('mp4') ? 'mp4' : 'webm';
+      setTimeout(() => saveBlob(s.clip.rec.blob, base + '_live.' + ext), 400);
+    }
   }
 }
 
