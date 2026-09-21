@@ -173,8 +173,8 @@ svg{display:block}
 }
 .fxp.open{opacity:1;pointer-events:auto;transform:translate(-50%,0)}
 .fxp-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
-.fxp-head .seg{flex:1;max-width:280px}
-.fxp-head .seg button{flex:1}
+.fxp-head .seg{flex:1;max-width:340px}
+.fxp-head .seg button{flex:1;padding:6px 4px}
 .fxp-body{overflow-y:auto;overscroll-behavior:contain;min-height:0;padding-bottom:4px;scrollbar-width:none}
 .fxp-body::-webkit-scrollbar{display:none}
 .chips{display:flex;gap:10px;overflow-x:auto;padding:4px 2px 8px;scrollbar-width:none}
@@ -340,6 +340,9 @@ input[type=range]:focus-visible{outline:2px solid var(--yellow);outline-offset:2
     </button>
     <div class="hud" id="hud"></div>
     <div class="top-r">
+      <button class="icon-btn" id="ringBtn" aria-label="Кольцевая лампа">
+        <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" stroke-width="3"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/></svg>
+      </button>
       <button class="icon-btn" id="fxBtn" aria-label="Фильтры и улучшение лица">
         <svg class="ico" viewBox="0 0 24 24"><path d="M11 3l1.9 5.1L18 10l-5.1 1.9L11 17l-1.9-5.1L4 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>
       </button>
@@ -355,7 +358,7 @@ input[type=range]:focus-visible{outline:2px solid var(--yellow);outline-offset:2
   <section class="fxp" id="fxPanel" aria-hidden="true">
     <div class="fxp-head">
       <div class="seg" id="fxTabs">
-        <button data-t="filters" class="on">Фильтры</button><button data-t="face">Лицо</button><button data-t="tone">Тон</button>
+        <button data-t="filters" class="on">Фильтры</button><button data-t="face">Лицо</button><button data-t="tone">Тон</button><button data-t="ring">Лампа</button>
       </div>
       <button class="mini" id="fxReset">Сброс</button>
     </div>
@@ -536,7 +539,7 @@ const els = {};
  'gate','gateTitle','gateText','gateBtn','env','envTitle','envText','envTry','envClose',
  'viewer','stage','vImg','vVid','vBar','vBack','vDate','vTime','vSave','vLive','vLiveText','vPrev','vNext','vHint','vCount',
  'sheet','sheetBg','sheetClose','qSeg','fitSwitch','liveSwitch','info','mblurCanvas','mblurSwitch',
- 'fxCanvas','fxBtn','fxPanel','fxTabs','fxBody','fxReset'
+ 'fxCanvas','fxBtn','ringBtn','fxPanel','fxTabs','fxBody','fxReset'
 ].forEach((id) => { els[id] = $(id); });
 
 let toastTimer = 0;
@@ -706,7 +709,7 @@ buffer.onError = () => { state.liveSupported = false; updateLiveState(); toast('
    Из этого же канваса берутся фото и поток для Live Photo, поэтому
    эффекты попадают и в JPEG, и в видео.
    ========================================================== */
-const FXDEF = { filter: 0, amt: 100, smooth: 0, teeth: 0, nose: 0, eyes: 0, exp: 0, con: 0, sat: 0, warm: 0, vig: 0, grain: 0 };
+const FXDEF = { filter: 0, amt: 100, smooth: 0, teeth: 0, nose: 0, eyes: 0, exp: 0, con: 0, sat: 0, warm: 0, vig: 0, grain: 0, ring: 0, rlight: 60, rsize: 70, rthick: 40 };
 state.fx = Object.assign({}, FXDEF, store.get('fx', {}));
 
 // Порядок = номер фильтра в шейдере
@@ -753,6 +756,11 @@ const FX_SL = {
     ['vig',   'Виньетка', 0, 100],
     ['grain', 'Зерно', 0, 100],
   ],
+  ring: [
+    ['rlight', 'Яркость света', 0, 100],
+    ['rsize',  'Размер кольца', 0, 100],
+    ['rthick', 'Толщина кольца', 0, 100],
+  ],
 };
 const FACE_KEYS = ['smooth', 'teeth', 'nose', 'eyes'];
 
@@ -775,6 +783,7 @@ uniform vec4 uFaceE[2];
 uniform vec2 uRot[2];
 uniform float uSmooth, uTeeth, uNoseAmt, uEyes;
 uniform float uExp, uCon, uSat, uWarm, uVig, uGrain, uFAmt;
+uniform float uRing, uRLight, uRSize, uRThick;
 uniform int uFilter;
 
 vec3 lumaSat(vec3 c, float s){ float l = dot(c, vec3(.299,.587,.114)); return mix(vec3(l), c, s); }
@@ -917,6 +926,14 @@ void main(){
   c.b *= 1. - uWarm*.14;
   c = clamp(c, 0., 1.);
 
+  // ---------- 4b. Свет кольцевой лампы на лице ----------
+  if(uRing > .5){
+    vec3 lt = vec3(.30,.29,.27) * uRLight;
+    c = 1. - (1. - c) * (1. - lt);
+    c *= 1. + .18 * uRLight;
+    c = clamp(c, 0., 1.);
+  }
+
   // ---------- 5. Фильтр ----------
   if(uFilter > 0){ c = mix(c, clamp(filt(c, uFilter, p, uv), 0., 1.), uFAmt); }
 
@@ -928,6 +945,20 @@ void main(){
   if(uGrain > .001){
     float n = fract(sin(dot(gl_FragCoord.xy + uTime*60., vec2(12.9898,78.233))) * 43758.5453);
     c += (n - .5) * uGrain * .28;
+  }
+  // ---------- 7. Само кольцо (рисуется в кадре → попадает в фото и Live Photo) ----------
+  if(uRing > .5){
+    float base = .5 * min(uAspect, 1.);
+    float ro = base * mix(.72, .98, uRSize);
+    float th = base * mix(.05, .22, uRThick);
+    float ri = ro - th;
+    float r = length((uv - .5) * asp);
+    float e = .004;
+    float band = smoothstep(ri - e, ri + e, r) * (1. - smoothstep(ro - e, ro + e, r));
+    float dist = max(max(ri - r, r - ro), 0.);
+    float glow = exp(-dist / (base * .10)) * (1. - band);
+    c = mix(c, vec3(1., .99, .96), band);
+    c += vec3(1., .97, .92) * glow * .30 * (.4 + .6 * uRLight);
   }
   gl_FragColor = vec4(clamp(c, 0., 1.), 1.);
 }`;
@@ -977,7 +1008,7 @@ function initFx() {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
     ['uTex','uAspect','uTime','uFaceMode','uNFaces','uEyeL','uEyeR','uNose','uMouth','uFaceE','uRot',
-     'uSmooth','uTeeth','uNoseAmt','uEyes','uExp','uCon','uSat','uWarm','uVig','uGrain','uFilter','uFAmt'
+     'uSmooth','uTeeth','uNoseAmt','uEyes','uExp','uCon','uSat','uWarm','uVig','uGrain','uFilter','uFAmt','uRing','uRLight','uRSize','uRThick'
     ].forEach((n) => { FX.U[n] = gl.getUniformLocation(pr, n); });
     gl.uniform1i(FX.U.uTex, 0);
     FX.gl = gl; FX.ok = true; FX.lost = false;
@@ -1121,6 +1152,8 @@ function fxRender() {
   gl.uniform1f(U.uSat, F.sat / 100); gl.uniform1f(U.uWarm, F.warm / 100);
   gl.uniform1f(U.uVig, F.vig / 100); gl.uniform1f(U.uGrain, F.grain / 100);
   gl.uniform1i(U.uFilter, F.filter | 0); gl.uniform1f(U.uFAmt, F.amt / 100);
+  gl.uniform1f(U.uRing, F.ring ? 1 : 0); gl.uniform1f(U.uRLight, F.rlight / 100);
+  gl.uniform1f(U.uRSize, F.rsize / 100); gl.uniform1f(U.uRThick, F.rthick / 100);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
@@ -1160,7 +1193,7 @@ function updateFaceNote() { const el = $('faceNote'); if (el) el.textContent = f
 let fxTab = 'filters';
 const saveFx = () => store.set('fx', state.fx);
 const fxActive = () => { const F = state.fx; return !!(F.filter || F.smooth || F.teeth || F.nose || F.eyes || F.exp || F.con || F.sat || F.warm || F.vig || F.grain); };
-const updateFxBtn = () => els.fxBtn.classList.toggle('active', fxActive());
+const updateFxBtn = () => { els.fxBtn.classList.toggle('active', fxActive()); els.ringBtn.classList.toggle('active', !!state.fx.ring); };
 const fmtV = (v, min) => (min < 0 && v > 0 ? '+' : '') + v;
 
 function paintRange(r) {
@@ -1182,7 +1215,7 @@ function renderFxTab() {
       '<button class="chip' + (state.fx.filter === i ? ' on' : '') + '" data-f="' + i + '" style="--sw:' + f[1] + '"><i></i><span>' + f[0] + '</span></button>'
     ).join('') + '</div>' + sliderHtml('amt', 'Интенсивность фильтра', 0, 100);
   } else {
-    B.innerHTML = (fxTab === 'face' ? '<p class="fxnote" id="faceNote"></p>' : '')
+    B.innerHTML = (fxTab === 'face' ? '<p class="fxnote" id="faceNote"></p>' : fxTab === 'ring' ? '<p class="fxnote">Кольцо рисуется прямо в кадре, поэтому попадает и в фото, и в Live Photo. Включить и выключить — кнопка ◎ вверху.</p>' : '')
       + FX_SL[fxTab].map((s) => sliderHtml(s[0], s[1], s[2], s[3], s[4])).join('');
     updateFaceNote();
   }
@@ -1191,6 +1224,10 @@ function renderFxTab() {
   if (on && on.scrollIntoView) { try { on.scrollIntoView({ inline: 'center', block: 'nearest' }); } catch {} }
 }
 function buildFxUi() {
+  els.ringBtn.addEventListener('click', () => {
+    state.fx.ring = state.fx.ring ? 0 : 1; saveFx(); updateFxBtn();
+    toast(state.fx.ring ? 'Кольцевая лампа включена' : 'Кольцевая лампа выключена', 1400);
+  });
   els.fxBtn.addEventListener('click', () => {
     const open = !els.fxPanel.classList.contains('open');
     els.fxPanel.classList.toggle('open', open);
@@ -1211,6 +1248,7 @@ function buildFxUi() {
     const em = els.fxBody.querySelector('[data-v="' + k + '"]');
     if (em) em.textContent = fmtV(+r.value, +r.min);
     saveFx(); updateFxBtn();
+    if (k[0] === 'r' && !state.fx.ring) { state.fx.ring = 1; saveFx(); updateFxBtn(); }
     if (FACE_KEYS.includes(k) && +r.value) ensureFace();
   });
   els.fxBody.addEventListener('click', (e) => {
@@ -2071,7 +2109,7 @@ document.addEventListener('visibilitychange', () => {
 function boot() {
   initFx();
   buildFxUi();
-  if (!FX.ok) { els.fxBtn.style.display = 'none'; toast('Фильтры недоступны: браузер не поддерживает WebGL', 4000); }
+  if (!FX.ok) { els.fxBtn.style.display = 'none'; els.ringBtn.style.display = 'none'; toast('Фильтры недоступны: браузер не поддерживает WebGL', 4000); }
   else if (FACE_KEYS.some((k) => state.fx[k])) ensureFace();
   els.video.classList.toggle('fill', state.fill);
   els.mblurCanvas.classList.toggle('fill', state.fill);
