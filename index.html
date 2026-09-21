@@ -59,6 +59,27 @@ svg{display:block}
 .flash.go{animation:flash .3s ease-out}
 @keyframes flash{0%{opacity:.85}100%{opacity:0}}
 
+/* Рамка фокусировки на лице — только UI-индикатор, в кадр не попадает */
+.face-focus{
+  position:absolute;left:0;top:0;width:64px;height:64px;z-index:3;
+  transform:translate(-50%,-50%) scale(1.12);
+  border:2px solid rgba(255,214,10,.95);border-radius:22%;
+  box-shadow:0 0 0 1px rgba(0,0,0,.25),0 0 18px rgba(255,214,10,.25);
+  opacity:0;pointer-events:none;
+  transition:
+    left .16s var(--ease),top .16s var(--ease),
+    width .16s var(--ease),height .16s var(--ease),
+    opacity .4s var(--ease),transform .4s var(--ease);
+  will-change:left,top,width,height,opacity,transform;
+}
+.face-focus.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.face-focus.pulse{animation:faceFocusPulse .55s var(--ease)}
+@keyframes faceFocusPulse{
+  0%{transform:translate(-50%,-50%) scale(1.32);opacity:.35}
+  60%{opacity:1}
+  100%{transform:translate(-50%,-50%) scale(1);opacity:1}
+}
+
 /* Верхняя панель */
 .top{
   position:absolute;left:0;right:0;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;gap:12px;
@@ -326,6 +347,7 @@ input[type=range]:focus-visible{outline:2px solid var(--yellow);outline-offset:2
   <video id="video" autoplay muted playsinline disablepictureinpicture disableremoteplayback></video>
   <canvas id="fxCanvas" aria-hidden="true"></canvas>
   <canvas id="mblurCanvas" aria-hidden="true"></canvas>
+  <div class="face-focus" id="faceFocus" aria-hidden="true"></div>
   <div class="flash" id="flash"></div>
 
   <header class="top">
@@ -539,7 +561,7 @@ const els = {};
  'gate','gateTitle','gateText','gateBtn','env','envTitle','envText','envTry','envClose',
  'viewer','stage','vImg','vVid','vBar','vBack','vDate','vTime','vSave','vLive','vLiveText','vPrev','vNext','vHint','vCount',
  'sheet','sheetBg','sheetClose','qSeg','fitSwitch','liveSwitch','info','mblurCanvas','mblurSwitch',
- 'fxCanvas','fxBtn','ringBtn','fxPanel','fxTabs','fxBody','fxReset'
+ 'fxCanvas','fxBtn','ringBtn','fxPanel','fxTabs','fxBody','fxReset','faceFocus'
 ].forEach((id) => { els[id] = $(id); });
 
 let toastTimer = 0;
@@ -964,7 +986,7 @@ void main(){
 }`;
 
 const FX = { ok: false, gl: null, U: {}, gen: 0, lost: false, lastCT: -1, lastAt: 0 };
-const FACE = { ready: false, loading: false, failed: false, lm: null, feats: [], last: 0, seen: 0 };
+const FACE = { ready: false, loading: false, failed: false, lm: null, feats: [], box: [], last: 0, seen: 0 };
 const FA = {
   eyeL: new Float32Array(8), eyeR: new Float32Array(8), nose: new Float32Array(8),
   mouth: new Float32Array(8), face: new Float32Array(8), rot: new Float32Array(4),
@@ -1091,9 +1113,10 @@ function computeFeat(lm, asp) {
 }
 
 function detectFace(now) {
-  if (!FACE.ready) return;
+  if (!FACE.ready) { hideFaceFocus(); return; }
   const F = state.fx;
-  if (!(F.smooth || F.teeth || F.nose || F.eyes)) { FACE.feats = []; return; }
+  const wantFeats = !!(F.smooth || F.teeth || F.nose || F.eyes);   // тяжёлые фичи для шейдера нужны только если включены соотв. эффекты
+  if (!wantFeats) FACE.feats = [];
   if (now - FACE.last < 45) return;
   FACE.last = now;
   const v = els.video;
@@ -1105,13 +1128,53 @@ function detectFace(now) {
     FACE.seen = now;
     const n = Math.min(2, list.length);
     for (let i = 0; i < n; i++) {
-      const f = computeFeat(list[i], asp), p = FACE.feats[i];
-      FACE.feats[i] = p ? f.map((x, k) => p[k] + (x - p[k]) * .6) : f;   // сглаживаем дрожание точек
+      const lm = list[i];
+      if (wantFeats) {
+        const f = computeFeat(lm, asp), p = FACE.feats[i];
+        FACE.feats[i] = p ? f.map((x, k) => p[k] + (x - p[k]) * .6) : f;   // сглаживаем дрожание точек
+      }
+      // грубый прямоугольник лица для рамки фокусировки (не участвует в шейдере/фото)
+      const cx = (lm[10].x + lm[152].x + lm[234].x + lm[454].x) / 4;
+      const cy = (lm[10].y + lm[152].y + lm[234].y + lm[454].y) / 4;
+      const hw = Math.abs(lm[454].x - lm[234].x) / 2 * 1.25;
+      const hh = Math.abs(lm[152].y - lm[10].y) / 2 * 1.35;
+      const pb = FACE.box[i];
+      FACE.box[i] = pb
+        ? { cx: pb.cx + (cx - pb.cx) * .5, cy: pb.cy + (cy - pb.cy) * .5, hw: pb.hw + (hw - pb.hw) * .5, hh: pb.hh + (hh - pb.hh) * .5 }
+        : { cx, cy, hw, hh };
     }
-    FACE.feats.length = n;
+    if (wantFeats) FACE.feats.length = n;
+    FACE.box.length = n;
   } else if (now - FACE.seen > 300) {
     FACE.feats = [];
+    FACE.box = [];
   }
+  updateFaceFocus();
+}
+
+/* ---- Рамка автофокуса на лице (чисто визуальный оверлей, в фото/Live Photo не попадает) ---- */
+function videoDisplayRect() {
+  const vw = els.video.videoWidth, vh = els.video.videoHeight;
+  if (!vw || !vh) return null;
+  const cw = els.app.clientWidth, ch = els.app.clientHeight;
+  const scale = state.fill ? Math.max(cw / vw, ch / vh) : Math.min(cw / vw, ch / vh);
+  const dw = vw * scale, dh = vh * scale;
+  return { x: (cw - dw) / 2, y: (ch - dh) / 2, w: dw, h: dh };
+}
+function hideFaceFocus() { if (els.faceFocus) els.faceFocus.classList.remove('show'); }
+function updateFaceFocus() {
+  const el = els.faceFocus; if (!el) return;
+  const box = FACE.box && FACE.box[0];
+  const rect = box && videoDisplayRect();
+  if (!box || !rect) { hideFaceFocus(); return; }
+  let nx = box.cx; if (state.mirror) nx = 1 - nx;
+  const wasShown = el.classList.contains('show');
+  el.style.left = (rect.x + nx * rect.w) + 'px';
+  el.style.top = (rect.y + box.cy * rect.h) + 'px';
+  el.style.width = Math.max(48, box.hw * 2 * rect.w) + 'px';
+  el.style.height = Math.max(48, box.hh * 2 * rect.h) + 'px';
+  el.classList.add('show');
+  if (!wasShown) { el.classList.remove('pulse'); void el.offsetWidth; el.classList.add('pulse'); }
 }
 
 function fxRender() {
@@ -1381,6 +1444,7 @@ function stopCamera() {
   state.stream = null; state.track = null;
   els.video.srcObject = null;
   els.app.classList.remove('fx');
+  hideFaceFocus();
   updateLiveState();
 }
 
@@ -1388,6 +1452,7 @@ function onTrackEnded() {
   buffer.stop();
   stopFxLoop();
   state.stream = null; state.lost = true;
+  hideFaceFocus();
   showGate({ title: 'Камера отключена', text: 'Поток остановлен: камеру отключили или её занял другой процесс.', button: 'Включить снова' });
 }
 
@@ -2110,7 +2175,7 @@ function boot() {
   initFx();
   buildFxUi();
   if (!FX.ok) { els.fxBtn.style.display = 'none'; els.ringBtn.style.display = 'none'; toast('Фильтры недоступны: браузер не поддерживает WebGL', 4000); }
-  else if (FACE_KEYS.some((k) => state.fx[k])) ensureFace();
+  else ensureFace();   // грузим модель лица заранее — нужна и для рамки автофокуса, и для бьюти-эффектов
   els.video.classList.toggle('fill', state.fill);
   els.mblurCanvas.classList.toggle('fill', state.fill);
   els.fxCanvas.classList.toggle('fill', state.fill);
