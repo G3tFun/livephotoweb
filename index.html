@@ -44,6 +44,11 @@ svg{display:block}
 #video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
 #video.fill{object-fit:cover}
 #video.mirror{transform:scaleX(-1)}
+#mblurCanvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;
+  z-index:1;pointer-events:none;opacity:0;transition:opacity .15s}
+#mblurCanvas.on{opacity:1}
+#mblurCanvas.fill{object-fit:cover}
+#mblurCanvas.mirror{transform:scaleX(-1)}
 .flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:9}
 .flash.go{animation:flash .3s ease-out}
 @keyframes flash{0%{opacity:.85}100%{opacity:0}}
@@ -275,6 +280,7 @@ svg{display:block}
 <!-- ================== Экран камеры ================== -->
 <div class="app" id="app">
   <video id="video" autoplay muted playsinline disablepictureinpicture disableremoteplayback></video>
+  <canvas id="mblurCanvas" aria-hidden="true"></canvas>
   <div class="flash" id="flash"></div>
 
   <header class="top">
@@ -367,6 +373,8 @@ svg{display:block}
     </div></div>
   <div class="row"><span>Заполнять экран</span>
     <label class="switch"><input type="checkbox" id="fitSwitch"><i></i></label></div>
+  <div class="row"><span>Motion Blur</span>
+    <label class="switch"><input type="checkbox" id="mblurSwitch"><i></i></label></div>
   <dl class="info" id="info"></dl>
   <p class="note">Live Photo записывается двумя перекрывающимися потоками MediaRecorder — при 4K нагрузка на процессор выше. Если картинка подтормаживает, выберите 1080p.</p>
   <button class="btn primary" id="sheetClose">Готово</button>
@@ -416,6 +424,7 @@ const CFG = {
   TIMESLICE_MS: 500,
   JPEG_QUALITY: 0.95,
   MAX_SHOTS: 40,         // сколько снимков держим в памяти
+  MBLUR_ALPHA: 0.45,     // прозрачность нового кадра при наложении — меньше = длиннее шлейф
 };
 // Кольцо из перекрывающихся рекордеров: новый стартует каждые STAGGER_MS,
 // каждый живёт LIFE_MS = 2×STAGGER_MS. Значит всегда работают 2 рекордера,
@@ -465,7 +474,7 @@ const els = {};
 ['app','video','flash','liveBtn','hud','settingsBtn','toast','gallery','thumbImg','shutter','flipBtn',
  'gate','gateTitle','gateText','gateBtn','env','envTitle','envText','envTry','envClose',
  'viewer','stage','vImg','vVid','vBar','vBack','vDate','vTime','vSave','vLive','vLiveText','vPrev','vNext','vHint','vCount',
- 'sheet','sheetBg','sheetClose','qSeg','fitSwitch','liveSwitch','info'
+ 'sheet','sheetBg','sheetClose','qSeg','fitSwitch','liveSwitch','info','mblurCanvas','mblurSwitch'
 ].forEach((id) => { els[id] = $(id); });
 
 let toastTimer = 0;
@@ -495,6 +504,7 @@ const state = {
   quality: store.get('quality', 'max'),
   live: store.get('live', true),
   fill: store.get('fill', false),
+  motionBlur: store.get('motionBlur', false),
   mirror: false,
   liveSupported: typeof MediaRecorder !== 'undefined',
   startGen: 0, lost: false,
@@ -699,6 +709,8 @@ async function attach(stream, gen) {
   state.settings = s;
   state.mirror = s.facingMode ? s.facingMode === 'user' : state.facing === 'user';
   els.video.classList.toggle('mirror', state.mirror);
+  els.mblurCanvas.classList.toggle('mirror', state.mirror);
+  if (state.motionBlur) startMotionBlur();
 
   startBuffer();
   updateHud();
@@ -708,6 +720,7 @@ async function attach(stream, gen) {
 }
 
 function stopCamera() {
+  stopMotionBlur();
   buffer.stop();
   if (state.track) state.track.removeEventListener('ended', onTrackEnded);
   stopStream(state.stream);
@@ -821,6 +834,56 @@ function setLive(on) {
 }
 
 /* ==========================================================
+   Motion Blur — живой шлейф от движения
+   ----------------------------------------------------------
+   Каждый кадр рисуем текущее видео поверх НЕОЧИЩЕННОГО канваса
+   с пониженной прозрачностью (globalAlpha). Получается простое
+   экспоненциальное накопление: то, что не двигалось — сходится
+   к чёткой картинке, то, что двигалось — оставляет смазанный
+   след. Без обнаружения движения, без оптического потока —
+   дёшево и работает на любом телефоне.
+   ========================================================== */
+let mblurCtx = null;
+let mblurRaf = 0;
+
+function sizeMotionBlurCanvas() {
+  const w = els.video.videoWidth, h = els.video.videoHeight;
+  if (!w || !h) return false;
+  if (els.mblurCanvas.width !== w || els.mblurCanvas.height !== h) {
+    els.mblurCanvas.width = w; els.mblurCanvas.height = h;
+  }
+  return true;
+}
+
+function motionBlurTick() {
+  if (!state.motionBlur || !state.stream || !sizeMotionBlurCanvas()) { mblurRaf = 0; return; }
+  mblurCtx.globalAlpha = CFG.MBLUR_ALPHA;
+  mblurCtx.drawImage(els.video, 0, 0, els.mblurCanvas.width, els.mblurCanvas.height);
+  mblurRaf = requestAnimationFrame(motionBlurTick);
+}
+
+function startMotionBlur() {
+  if (mblurRaf || !state.stream || !sizeMotionBlurCanvas()) return;
+  if (!mblurCtx) mblurCtx = els.mblurCanvas.getContext('2d', { alpha: false });
+  mblurCtx.globalAlpha = 1;                                  // затравка: без неё первый кадр проступает из чёрного
+  mblurCtx.drawImage(els.video, 0, 0, els.mblurCanvas.width, els.mblurCanvas.height);
+  mblurRaf = requestAnimationFrame(motionBlurTick);
+}
+
+function stopMotionBlur() {
+  cancelAnimationFrame(mblurRaf);
+  mblurRaf = 0;
+}
+
+function setMotionBlur(on) {
+  state.motionBlur = on; store.set('motionBlur', on);
+  els.mblurSwitch.checked = on;
+  els.mblurCanvas.classList.toggle('on', on);
+  if (on) startMotionBlur(); else stopMotionBlur();
+  toast(on ? 'Motion Blur включён' : 'Motion Blur выключен', 1400);
+}
+
+/* ==========================================================
    Съёмка
    ========================================================== */
 let capTimer = 0;
@@ -842,9 +905,10 @@ async function shoot() {
 
   const t = performance.now();                       // момент затвора для кольцевого буфера
   const w = video.videoWidth, h = video.videoHeight; // максимальное разрешение потока
+  const source = (state.motionBlur && mblurCtx && els.mblurCanvas.width === w) ? els.mblurCanvas : video;
   const canvas = document.createElement('canvas');
   canvas.width = w; canvas.height = h;
-  canvas.getContext('2d', { alpha: false }).drawImage(video, 0, 0, w, h);
+  canvas.getContext('2d', { alpha: false }).drawImage(source, 0, 0, w, h);
 
   const useLive = state.live && buffer.running;
   const clipPromise = useLive ? buffer.capture(t) : Promise.resolve(null);
@@ -1214,6 +1278,7 @@ let ffmpegPromise = null;
 function loadScriptTag(src) {
   return new Promise((resolve, reject) => {
     const el = document.createElement('script');
+    el.crossOrigin = 'anonymous';
     el.src = src; el.onload = resolve; el.onerror = () => reject(new Error('Не удалось загрузить ' + src));
     document.head.appendChild(el);
   });
@@ -1318,6 +1383,7 @@ function syncSheet() {
   els.qSeg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.q === state.quality));
   els.fitSwitch.checked = state.fill;
   els.liveSwitch.checked = state.live && state.liveSupported;
+  els.mblurSwitch.checked = state.motionBlur;
 }
 function openSheet() { fillInfo(); syncSheet(); els.sheet.classList.add('open'); els.sheetBg.classList.add('open'); els.sheet.setAttribute('aria-hidden', 'false'); }
 function closeSheet() { els.sheet.classList.remove('open'); els.sheetBg.classList.remove('open'); els.sheet.setAttribute('aria-hidden', 'true'); }
@@ -1346,8 +1412,10 @@ els.qSeg.addEventListener('click', (e) => {
 els.fitSwitch.addEventListener('change', () => {
   state.fill = els.fitSwitch.checked; store.set('fill', state.fill);
   els.video.classList.toggle('fill', state.fill);
+  els.mblurCanvas.classList.toggle('fill', state.fill);
 });
 els.liveSwitch.addEventListener('change', () => setLive(els.liveSwitch.checked));
+els.mblurSwitch.addEventListener('change', () => setMotionBlur(els.mblurSwitch.checked));
 
 els.envClose.addEventListener('click', () => els.env.classList.remove('show'));
 els.envTry.addEventListener('click', () => { els.env.classList.remove('show'); startCamera(); });
@@ -1364,9 +1432,10 @@ window.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { buffer.stop(); return; }
+  if (document.hidden) { buffer.stop(); stopMotionBlur(); return; }
   if (state.lost) { startCamera(); return; }
   if (state.stream && state.track && state.track.readyState === 'live') startBuffer();
+  if (state.motionBlur) startMotionBlur();
 });
 
 /* ==========================================================
@@ -1374,6 +1443,8 @@ document.addEventListener('visibilitychange', () => {
    ========================================================== */
 function boot() {
   els.video.classList.toggle('fill', state.fill);
+  els.mblurCanvas.classList.toggle('fill', state.fill);
+  els.mblurCanvas.classList.toggle('on', state.motionBlur);
   syncSheet();
   updateLiveState();
 
