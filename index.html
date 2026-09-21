@@ -365,6 +365,12 @@ input[type=range]:focus-visible{outline:2px solid var(--yellow);outline-offset:2
       <button class="icon-btn" id="ringBtn" aria-label="Кольцевая лампа">
         <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" stroke-width="3"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/></svg>
       </button>
+      <button class="icon-btn" id="focusBtn" aria-label="Рамка автофокуса на лице">
+        <svg class="ico" viewBox="0 0 24 24">
+          <path d="M4 9V6a2 2 0 0 1 2-2h3"/><path d="M15 4h3a2 2 0 0 1 2 2v3"/>
+          <path d="M20 15v3a2 2 0 0 1-2 2h-3"/><path d="M9 20H6a2 2 0 0 1-2-2v-3"/>
+        </svg>
+      </button>
       <button class="icon-btn" id="fxBtn" aria-label="Фильтры и улучшение лица">
         <svg class="ico" viewBox="0 0 24 24"><path d="M11 3l1.9 5.1L18 10l-5.1 1.9L11 17l-1.9-5.1L4 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>
       </button>
@@ -561,7 +567,7 @@ const els = {};
  'gate','gateTitle','gateText','gateBtn','env','envTitle','envText','envTry','envClose',
  'viewer','stage','vImg','vVid','vBar','vBack','vDate','vTime','vSave','vLive','vLiveText','vPrev','vNext','vHint','vCount',
  'sheet','sheetBg','sheetClose','qSeg','fitSwitch','liveSwitch','info','mblurCanvas','mblurSwitch',
- 'fxCanvas','fxBtn','ringBtn','fxPanel','fxTabs','fxBody','fxReset','faceFocus'
+ 'fxCanvas','fxBtn','ringBtn','fxPanel','fxTabs','fxBody','fxReset','faceFocus','focusBtn'
 ].forEach((id) => { els[id] = $(id); });
 
 let toastTimer = 0;
@@ -588,11 +594,12 @@ function codecLabel(m) {
 const state = {
   stream: null, outStream: null, track: null, settings: null,
   facing: isTouch ? 'environment' : 'user',
-  quality: store.get('quality', 'max'),
+  quality: store.get('quality', isTouch ? '1080' : 'max'),   // на телефонах 4K через WebGL — прямой путь к тормозам, по умолчанию берём 1080p
   live: store.get('live', true),
   fill: store.get('fill', false),
   motionBlur: store.get('motionBlur', false),
   mirror: false,
+  faceFocusOn: store.get('faceFocusOn', false),
   liveSupported: typeof MediaRecorder !== 'undefined',
   startGen: 0, lost: false,
   shots: [], seq: 0,
@@ -1113,10 +1120,15 @@ function computeFeat(lm, asp) {
 }
 
 function detectFace(now) {
-  if (!FACE.ready) { hideFaceFocus(); return; }
   const F = state.fx;
-  const wantFeats = !!(F.smooth || F.teeth || F.nose || F.eyes);   // тяжёлые фичи для шейдера нужны только если включены соотв. эффекты
-  if (!wantFeats) FACE.feats = [];
+  const wantFeats = !!(F.smooth || F.teeth || F.nose || F.eyes);   // бьюти-эффекты по лицу
+  const wantFocus = state.faceFocusOn;                             // рамка автофокуса (отдельный тумблер, по умолчанию выкл.)
+  if (!wantFeats && !wantFocus) {                                   // ничего из этого не нужно — не грузим CPU/GPU детекцией
+    if (FACE.feats.length) FACE.feats = [];
+    if (FACE.box.length) { FACE.box = []; hideFaceFocus(); }
+    return;
+  }
+  if (!FACE.ready) return;                                          // модель ещё не загрузилась
   if (now - FACE.last < 45) return;
   FACE.last = now;
   const v = els.video;
@@ -1133,23 +1145,25 @@ function detectFace(now) {
         const f = computeFeat(lm, asp), p = FACE.feats[i];
         FACE.feats[i] = p ? f.map((x, k) => p[k] + (x - p[k]) * .6) : f;   // сглаживаем дрожание точек
       }
-      // грубый прямоугольник лица для рамки фокусировки (не участвует в шейдере/фото)
-      const cx = (lm[10].x + lm[152].x + lm[234].x + lm[454].x) / 4;
-      const cy = (lm[10].y + lm[152].y + lm[234].y + lm[454].y) / 4;
-      const hw = Math.abs(lm[454].x - lm[234].x) / 2 * 1.25;
-      const hh = Math.abs(lm[152].y - lm[10].y) / 2 * 1.35;
-      const pb = FACE.box[i];
-      FACE.box[i] = pb
-        ? { cx: pb.cx + (cx - pb.cx) * .5, cy: pb.cy + (cy - pb.cy) * .5, hw: pb.hw + (hw - pb.hw) * .5, hh: pb.hh + (hh - pb.hh) * .5 }
-        : { cx, cy, hw, hh };
+      if (wantFocus) {
+        // грубый прямоугольник лица для рамки фокусировки (не участвует в шейдере/фото)
+        const cx = (lm[10].x + lm[152].x + lm[234].x + lm[454].x) / 4;
+        const cy = (lm[10].y + lm[152].y + lm[234].y + lm[454].y) / 4;
+        const hw = Math.abs(lm[454].x - lm[234].x) / 2 * 1.25;
+        const hh = Math.abs(lm[152].y - lm[10].y) / 2 * 1.35;
+        const pb = FACE.box[i];
+        FACE.box[i] = pb
+          ? { cx: pb.cx + (cx - pb.cx) * .5, cy: pb.cy + (cy - pb.cy) * .5, hw: pb.hw + (hw - pb.hw) * .5, hh: pb.hh + (hh - pb.hh) * .5 }
+          : { cx, cy, hw, hh };
+      }
     }
     if (wantFeats) FACE.feats.length = n;
-    FACE.box.length = n;
+    if (wantFocus) FACE.box.length = n;
   } else if (now - FACE.seen > 300) {
-    FACE.feats = [];
-    FACE.box = [];
+    if (wantFeats) FACE.feats = [];
+    if (wantFocus) FACE.box = [];
   }
-  updateFaceFocus();
+  if (wantFocus) updateFaceFocus(); else hideFaceFocus();
 }
 
 /* ---- Рамка автофокуса на лице (чисто визуальный оверлей, в фото/Live Photo не попадает) ---- */
@@ -1220,6 +1234,15 @@ function fxRender() {
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
+// Перерисовать уже подготовленный кадр с лампой включённой/выключенной — переиспользует
+// текстуру и остальные uniform'ы, поэтому стоит одну лёгкую отрисовку, а не полный пересчёт.
+// Используется только в момент нажатия затвора, чтобы убрать лампу из сохранённого JPG.
+function drawFxFrame(ringOn) {
+  if (!FX.ok || !FX.gl) return;
+  FX.gl.uniform1f(FX.U.uRing, ringOn ? 1 : 0);
+  FX.gl.drawArrays(FX.gl.TRIANGLE_STRIP, 0, 4);
+}
+
 // ---- Модель лица (MediaPipe) — грузится один раз, когда нужна ----
 async function ensureFace() {
   if (FACE.ready || FACE.loading || FACE.failed || !FX.ok) return;
@@ -1257,6 +1280,7 @@ let fxTab = 'filters';
 const saveFx = () => store.set('fx', state.fx);
 const fxActive = () => { const F = state.fx; return !!(F.filter || F.smooth || F.teeth || F.nose || F.eyes || F.exp || F.con || F.sat || F.warm || F.vig || F.grain); };
 const updateFxBtn = () => { els.fxBtn.classList.toggle('active', fxActive()); els.ringBtn.classList.toggle('active', !!state.fx.ring); };
+const updateFocusBtn = () => { if (els.focusBtn) els.focusBtn.classList.toggle('active', !!state.faceFocusOn); };
 const fmtV = (v, min) => (min < 0 && v > 0 ? '+' : '') + v;
 
 function paintRange(r) {
@@ -1278,7 +1302,7 @@ function renderFxTab() {
       '<button class="chip' + (state.fx.filter === i ? ' on' : '') + '" data-f="' + i + '" style="--sw:' + f[1] + '"><i></i><span>' + f[0] + '</span></button>'
     ).join('') + '</div>' + sliderHtml('amt', 'Интенсивность фильтра', 0, 100);
   } else {
-    B.innerHTML = (fxTab === 'face' ? '<p class="fxnote" id="faceNote"></p>' : fxTab === 'ring' ? '<p class="fxnote">Кольцо рисуется прямо в кадре, поэтому попадает и в фото, и в Live Photo. Включить и выключить — кнопка ◎ вверху.</p>' : '')
+    B.innerHTML = (fxTab === 'face' ? '<p class="fxnote" id="faceNote"></p>' : fxTab === 'ring' ? '<p class="fxnote">Лампа видна в видоискателе и попадает в видео Live Photo, но автоматически убирается с итогового фото. Включить и выключить — кнопка ◎ вверху.</p>' : '')
       + FX_SL[fxTab].map((s) => sliderHtml(s[0], s[1], s[2], s[3], s[4])).join('');
     updateFaceNote();
   }
@@ -1290,6 +1314,11 @@ function buildFxUi() {
   els.ringBtn.addEventListener('click', () => {
     state.fx.ring = state.fx.ring ? 0 : 1; saveFx(); updateFxBtn();
     toast(state.fx.ring ? 'Кольцевая лампа включена' : 'Кольцевая лампа выключена', 1400);
+  });
+  if (els.focusBtn) els.focusBtn.addEventListener('click', () => {
+    state.faceFocusOn = !state.faceFocusOn; store.set('faceFocusOn', state.faceFocusOn); updateFocusBtn();
+    if (state.faceFocusOn) { ensureFace(); toast('Рамка фокуса на лице включена', 1400); }
+    else { hideFaceFocus(); toast('Рамка фокуса на лице выключена', 1400); }
   });
   els.fxBtn.addEventListener('click', () => {
     const open = !els.fxPanel.classList.contains('open');
@@ -1338,6 +1367,7 @@ function buildFxUi() {
     if (FX.ok && state.stream) startFxLoop();
   });
   updateFxBtn();
+  updateFocusBtn();
 }
 
 /* ==========================================================
@@ -1626,10 +1656,14 @@ async function shoot() {
 
   const t = performance.now();                       // момент затвора для кольцевого буфера
   const w = video.videoWidth, h = video.videoHeight; // максимальное разрешение потока
-  const source = (state.motionBlur && mblurCtx && els.mblurCanvas.width === w) ? els.mblurCanvas : fxSource();
+  const useMblur = state.motionBlur && mblurCtx && els.mblurCanvas.width === w;
+  const source = useMblur ? els.mblurCanvas : fxSource();
+  const hideRingForShot = !useMblur && FX.ok && !!state.fx.ring;   // лампа — только визуальный вспомогатель, из фото убираем
   const canvas = document.createElement('canvas');
   canvas.width = w; canvas.height = h;
+  if (hideRingForShot) drawFxFrame(false);            // на долю кадра рисуем без лампы — синхронно, на экран не попадает
   canvas.getContext('2d', { alpha: false }).drawImage(source, 0, 0, w, h);
+  if (hideRingForShot) drawFxFrame(true);              // сразу возвращаем лампу для живого видоискателя
 
   const useLive = state.live && buffer.running;
   const clipPromise = useLive ? buffer.capture(t) : Promise.resolve(null);
@@ -2174,8 +2208,8 @@ document.addEventListener('visibilitychange', () => {
 function boot() {
   initFx();
   buildFxUi();
-  if (!FX.ok) { els.fxBtn.style.display = 'none'; els.ringBtn.style.display = 'none'; toast('Фильтры недоступны: браузер не поддерживает WebGL', 4000); }
-  else ensureFace();   // грузим модель лица заранее — нужна и для рамки автофокуса, и для бьюти-эффектов
+  if (!FX.ok) { els.fxBtn.style.display = 'none'; els.ringBtn.style.display = 'none'; if (els.focusBtn) els.focusBtn.style.display = 'none'; toast('Фильтры недоступны: браузер не поддерживает WebGL', 4000); }
+  else if (FACE_KEYS.some((k) => state.fx[k]) || state.faceFocusOn) ensureFace();   // грузим модель лица, только если она реально нужна
   els.video.classList.toggle('fill', state.fill);
   els.mblurCanvas.classList.toggle('fill', state.fill);
   els.fxCanvas.classList.toggle('fill', state.fill);
