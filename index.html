@@ -44,6 +44,12 @@ svg{display:block}
 #video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
 #video.fill{object-fit:cover}
 #video.mirror{transform:scaleX(-1)}
+/* Канвас с эффектами (WebGL) — показывает обработанную картинку вместо сырого видео */
+#fxCanvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;display:none}
+#fxCanvas.fill{object-fit:cover}
+#fxCanvas.mirror{transform:scaleX(-1)}
+.app.fx #fxCanvas{display:block}
+.app.fx #video{opacity:0}
 #mblurCanvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;
   z-index:1;pointer-events:none;opacity:0;transition:opacity .15s}
 #mblurCanvas.on{opacity:1}
@@ -60,13 +66,15 @@ svg{display:block}
   background:linear-gradient(rgba(0,0,0,.55),transparent);pointer-events:none;
 }
 .top>*{pointer-events:auto}
+.top-r{display:flex;gap:10px;flex:none}
 .hud{flex:1;text-align:center;font-size:12px;font-weight:500;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
 .icon-btn{
   width:40px;height:40px;border-radius:50%;display:grid;place-items:center;flex:none;
   background:var(--glass);-webkit-backdrop-filter:blur(14px) saturate(160%);backdrop-filter:blur(14px) saturate(160%);
-  transition:transform .12s,background .2s;
+  transition:transform .12s,background .2s,color .2s;
 }
 .icon-btn:active{transform:scale(.92)}
+.icon-btn.active{color:var(--yellow)}
 .icon-btn svg{width:20px;height:20px}
 .icon-btn.big{width:54px;height:54px}
 .icon-btn.big svg{width:24px;height:24px}
@@ -152,6 +160,42 @@ svg{display:block}
 .btn:active{transform:scale(.97)}
 .btn.primary{background:var(--yellow);color:#000}
 .btn.ghost{background:rgba(255,255,255,.12);color:#fff}
+
+/* ==========================================================
+   Панель эффектов: фильтры / лицо / тон
+   ========================================================== */
+.fxp{
+  position:absolute;left:50%;bottom:calc(var(--sab) + 132px);z-index:6;width:calc(100% - 24px);max-width:520px;
+  max-height:min(46dvh,400px);display:flex;flex-direction:column;padding:12px 14px 8px;border-radius:22px;
+  background:var(--glass-2);-webkit-backdrop-filter:blur(30px) saturate(160%);backdrop-filter:blur(30px) saturate(160%);
+  border:1px solid var(--line);opacity:0;pointer-events:none;transform:translate(-50%,12px);
+  transition:opacity .2s,transform .3s var(--ease);
+}
+.fxp.open{opacity:1;pointer-events:auto;transform:translate(-50%,0)}
+.fxp-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.fxp-head .seg{flex:1;max-width:280px}
+.fxp-head .seg button{flex:1}
+.fxp-body{overflow-y:auto;overscroll-behavior:contain;min-height:0;padding-bottom:4px;scrollbar-width:none}
+.fxp-body::-webkit-scrollbar{display:none}
+.chips{display:flex;gap:10px;overflow-x:auto;padding:4px 2px 8px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;width:64px;display:grid;gap:5px;justify-items:center;font-size:11px;color:var(--muted)}
+.chip i{width:58px;height:58px;border-radius:15px;border:2px solid transparent;background:var(--sw);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);transition:border-color .15s,transform .15s}
+.chip span{max-width:64px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip.on{color:#fff}
+.chip.on i{border-color:var(--yellow);transform:scale(1.04)}
+.sl{display:grid;gap:2px;padding:6px 0}
+.sl-h{display:flex;justify-content:space-between;gap:10px;font-size:13px}
+.sl-h b{font-weight:500}
+.sl-h em{font-style:normal;color:var(--muted);font-variant-numeric:tabular-nums}
+.sl small{color:var(--muted);font-size:11px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:28px;margin:0;background:transparent;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--trk,rgba(255,255,255,.25))}
+input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:var(--trk,rgba(255,255,255,.25))}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;margin-top:-9px;border-radius:50%;background:#fff;border:0;box-shadow:0 2px 6px rgba(0,0,0,.45)}
+input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;background:#fff;border:0;box-shadow:0 2px 6px rgba(0,0,0,.45)}
+input[type=range]:focus-visible{outline:2px solid var(--yellow);outline-offset:2px;border-radius:6px}
+.fxnote{margin:0 0 4px;font-size:12px;color:var(--muted)}
 
 /* ==========================================================
    Плашка про file:// / отсутствие HTTPS
@@ -280,6 +324,7 @@ svg{display:block}
 <!-- ================== Экран камеры ================== -->
 <div class="app" id="app">
   <video id="video" autoplay muted playsinline disablepictureinpicture disableremoteplayback></video>
+  <canvas id="fxCanvas" aria-hidden="true"></canvas>
   <canvas id="mblurCanvas" aria-hidden="true"></canvas>
   <div class="flash" id="flash"></div>
 
@@ -294,12 +339,28 @@ svg{display:block}
       <span>LIVE</span>
     </button>
     <div class="hud" id="hud"></div>
-    <button class="icon-btn" id="settingsBtn" aria-label="Настройки">
-      <svg class="ico" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
-    </button>
+    <div class="top-r">
+      <button class="icon-btn" id="fxBtn" aria-label="Фильтры и улучшение лица">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M11 3l1.9 5.1L18 10l-5.1 1.9L11 17l-1.9-5.1L4 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>
+      </button>
+      <button class="icon-btn" id="settingsBtn" aria-label="Настройки">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
+      </button>
+    </div>
   </header>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <!-- Панель эффектов -->
+  <section class="fxp" id="fxPanel" aria-hidden="true">
+    <div class="fxp-head">
+      <div class="seg" id="fxTabs">
+        <button data-t="filters" class="on">Фильтры</button><button data-t="face">Лицо</button><button data-t="tone">Тон</button>
+      </div>
+      <button class="mini" id="fxReset">Сброс</button>
+    </div>
+    <div class="fxp-body" id="fxBody"></div>
+  </section>
 
   <footer class="bottom">
     <button class="thumb empty" id="gallery" aria-label="Открыть последний снимок">
@@ -474,7 +535,8 @@ const els = {};
 ['app','video','flash','liveBtn','hud','settingsBtn','toast','gallery','thumbImg','shutter','flipBtn',
  'gate','gateTitle','gateText','gateBtn','env','envTitle','envText','envTry','envClose',
  'viewer','stage','vImg','vVid','vBar','vBack','vDate','vTime','vSave','vLive','vLiveText','vPrev','vNext','vHint','vCount',
- 'sheet','sheetBg','sheetClose','qSeg','fitSwitch','liveSwitch','info','mblurCanvas','mblurSwitch'
+ 'sheet','sheetBg','sheetClose','qSeg','fitSwitch','liveSwitch','info','mblurCanvas','mblurSwitch',
+ 'fxCanvas','fxBtn','fxPanel','fxTabs','fxBody','fxReset'
 ].forEach((id) => { els[id] = $(id); });
 
 let toastTimer = 0;
@@ -499,7 +561,7 @@ function codecLabel(m) {
    Состояние
    ========================================================== */
 const state = {
-  stream: null, track: null, settings: null,
+  stream: null, outStream: null, track: null, settings: null,
   facing: isTouch ? 'environment' : 'user',
   quality: store.get('quality', 'max'),
   live: store.get('live', true),
@@ -629,6 +691,555 @@ const buffer = new LiveBuffer();
 buffer.onError = () => { state.liveSupported = false; updateLiveState(); toast('Запись Live Photo недоступна — будут только фото'); };
 
 /* ==========================================================
+   Эффекты: фильтры + улучшение лица (WebGL)
+   ----------------------------------------------------------
+   Видео с камеры рисуется в WebGL-канвас одним фрагментным шейдером:
+     1) деформация: увеличение/уменьшение глаз, сужение/расширение носа;
+     2) сглаживание кожи (билатеральный фильтр, маска = овал лица × цвет кожи);
+     3) отбеливание зубов (эллипс рта × «не красное и не тёмное»);
+     4) тон: экспозиция, контраст, насыщенность, тепло;
+     5) цветовой фильтр с регулируемой интенсивностью;
+     6) виньетка и зерно.
+   Точки лица даёт MediaPipe Face Landmarker (грузится с CDN при первом
+   использовании «Лица»). Если модель не загрузилась — сглаживание
+   работает по цвету кожи без привязки к лицу.
+   Из этого же канваса берутся фото и поток для Live Photo, поэтому
+   эффекты попадают и в JPEG, и в видео.
+   ========================================================== */
+const FXDEF = { filter: 0, amt: 100, smooth: 0, teeth: 0, nose: 0, eyes: 0, exp: 0, con: 0, sat: 0, warm: 0, vig: 0, grain: 0 };
+state.fx = Object.assign({}, FXDEF, store.get('fx', {}));
+
+// Порядок = номер фильтра в шейдере
+const FX_LIST = [
+  ['Оригинал',   'linear-gradient(135deg,#6b6b70,#d0d0d5)'],
+  ['Тёплый',     'linear-gradient(135deg,#ffb45c,#ff7a45)'],
+  ['Холодный',   'linear-gradient(135deg,#6fb8ff,#4c6bff)'],
+  ['Золотой час','linear-gradient(135deg,#ffd76a,#e8892f)'],
+  ['Закат',      'linear-gradient(160deg,#ffb26b,#ff5d8f 60%,#6b4bd6)'],
+  ['Винтаж',     'linear-gradient(135deg,#d9b98a,#8f6b45)'],
+  ['Сепия',      'linear-gradient(135deg,#c9a26b,#5b3e22)'],
+  ['Плёнка',     'linear-gradient(135deg,#5f8a86,#d9a16a)'],
+  ['Кино',       'linear-gradient(135deg,#1d6f7a,#f09a4a)'],
+  ['Яркий',      'linear-gradient(135deg,#ff3d81,#ffd400 50%,#00d1ff)'],
+  ['Драма',      'linear-gradient(135deg,#1b1b1f,#8a8a92)'],
+  ['Пастель',    'linear-gradient(135deg,#ffd6e8,#cfe8ff)'],
+  ['Выцветший',  'linear-gradient(135deg,#b7b2a7,#e6e0d3)'],
+  ['Мечта',      'linear-gradient(135deg,#ffe0f0,#e3d4ff)'],
+  ['Изумруд',    'linear-gradient(135deg,#0f8b6b,#9be3b0)'],
+  ['Мороз',      'linear-gradient(135deg,#bfe6ff,#5aa0e8)'],
+  ['Ч/Б',        'linear-gradient(135deg,#111,#eee)'],
+  ['Нуар',       'linear-gradient(135deg,#000,#bdbdbd 70%,#fff)'],
+  ['Дуотон',     'linear-gradient(135deg,#150059,#ff80a0)'],
+  ['Киберпанк',  'linear-gradient(135deg,#8c0dff,#00f0ff)'],
+  ['Тепловизор', 'linear-gradient(135deg,#1a0066,#c800a0 35%,#ff4a1a 65%,#ffe94a)'],
+  ['Матрица',    'linear-gradient(135deg,#001a08,#0dff5a)'],
+  ['Постер',     'linear-gradient(135deg,#e63946 0 33%,#f1c40f 33% 66%,#1d3557 66%)'],
+  ['Глитч',      'linear-gradient(135deg,#ff004c 0 34%,#111 34% 66%,#00e5ff 66%)'],
+  ['Негатив',    'linear-gradient(135deg,#f2f2f2,#0a0a0a)'],
+];
+
+const FX_SL = {
+  face: [
+    ['smooth', 'Сглаживание кожи', 0, 100],
+    ['teeth',  'Отбеливание зубов', 0, 100],
+    ['nose',   'Нос', -100, 100, '− шире · + уже'],
+    ['eyes',   'Глаза', -100, 100, '− меньше · + больше'],
+  ],
+  tone: [
+    ['exp',   'Экспозиция', -100, 100],
+    ['con',   'Контраст', -100, 100],
+    ['sat',   'Насыщенность', -100, 100],
+    ['warm',  'Тепло', -100, 100],
+    ['vig',   'Виньетка', 0, 100],
+    ['grain', 'Зерно', 0, 100],
+  ],
+};
+const FACE_KEYS = ['smooth', 'teeth', 'nose', 'eyes'];
+
+const FX_VS = 'attribute vec2 aPos;varying vec2 vUV;void main(){vUV=vec2(aPos.x*.5+.5,.5-aPos.y*.5);gl_Position=vec4(aPos,0.,1.);}';
+
+const FX_FS = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+varying vec2 vUV;
+uniform sampler2D uTex;
+uniform float uAspect, uTime, uFaceMode, uNFaces;
+uniform vec4 uEyeL[2];
+uniform vec4 uEyeR[2];
+uniform vec4 uNose[2];
+uniform vec4 uMouth[2];
+uniform vec4 uFaceE[2];
+uniform vec2 uRot[2];
+uniform float uSmooth, uTeeth, uNoseAmt, uEyes;
+uniform float uExp, uCon, uSat, uWarm, uVig, uGrain, uFAmt;
+uniform int uFilter;
+
+vec3 lumaSat(vec3 c, float s){ float l = dot(c, vec3(.299,.587,.114)); return mix(vec3(l), c, s); }
+vec3 contr(vec3 c, float k){ return (c - .5) * k + .5; }
+
+float skinP(vec3 c){
+  float y  = dot(c, vec3(.299,.587,.114));
+  float cb = .5 + (-.169*c.r - .331*c.g + .5*c.b);
+  float cr = .5 + (.5*c.r - .419*c.g - .081*c.b);
+  float a = smoothstep(.27,.31,cb) * (1. - smoothstep(.49,.53,cb));
+  float b = smoothstep(.50,.53,cr) * (1. - smoothstep(.66,.70,cr));
+  return a * b * smoothstep(.12,.25,y);
+}
+
+vec3 filt(vec3 c, int f, vec2 p, vec2 uv){
+  float l = dot(c, vec3(.299,.587,.114));
+  vec3 o = c;
+  if(f==1){ o = lumaSat(c*vec3(1.10,1.02,.88), 1.1); }
+  else if(f==2){ o = lumaSat(c*vec3(.90,1.0,1.13), 1.05); }
+  else if(f==3){ o = contr(c*vec3(1.16,1.0,.78)+vec3(.05,.02,0.), 1.08); }
+  else if(f==4){ o = c*vec3(1.15,.90,.78) + vec3(.16,.04,.10)*uv.y; o = lumaSat(o, 1.15); }
+  else if(f==5){ o = lumaSat(c,.65)*.88 + .09; o *= vec3(1.06,.98,.84); }
+  else if(f==6){ o = vec3(dot(c,vec3(.393,.769,.189)), dot(c,vec3(.349,.686,.168)), dot(c,vec3(.272,.534,.131))); }
+  else if(f==7){ o = c*.9 + .05; o += vec3(.02,.04,.05)*(1.-l) + vec3(.05,.02,-.03)*l; o = lumaSat(o,.9); }
+  else if(f==8){ o = mix(c*vec3(.82,1.0,1.12), c*vec3(1.14,1.0,.84), smoothstep(.2,.8,l)); o = contr(o,1.12); }
+  else if(f==9){ o = contr(lumaSat(c,1.55), 1.1); }
+  else if(f==10){ o = contr(lumaSat(c,.55), 1.4) * .96; }
+  else if(f==11){ o = lumaSat(mix(c, vec3(1.), .25), .75); }
+  else if(f==12){ o = lumaSat(c*.85 + .12, .75); }
+  else if(f==13){ o = lumaSat(mix(c, vec3(1.,.84,.95), .22), 1.1); o = contr(o,.92) + .03; }
+  else if(f==14){ o = lumaSat(c*vec3(.88,1.10,1.0), 1.2); }
+  else if(f==15){ o = contr(lumaSat(c*vec3(.86,1.0,1.16)+vec3(0.,.02,.06), .8), 1.1); }
+  else if(f==16){ o = vec3(l); }
+  else if(f==17){ float g = clamp((l-.5)*1.7+.5, 0., 1.); o = vec3(g*g*(3.-2.*g)); }
+  else if(f==18){ o = mix(vec3(.08,0.,.35), vec3(1.,.5,.62), l); }
+  else if(f==19){ vec3 t = mix(vec3(.55,.05,.9), vec3(.1,.95,1.), smoothstep(.15,.85,l)); o = mix(lumaSat(c,1.3), t*(.4+l*.9), .55); }
+  else if(f==20){
+    vec3 h = mix(vec3(0.,0.,.3), vec3(.6,0.,.7), smoothstep(0.,.3,l));
+    h = mix(h, vec3(1.,.2,.1), smoothstep(.3,.6,l));
+    h = mix(h, vec3(1.,.9,.1), smoothstep(.6,.85,l));
+    o = mix(h, vec3(1.), smoothstep(.85,1.,l));
+  }
+  else if(f==21){ o = vec3(.05,1.,.35)*l*1.25 + c*.05; }
+  else if(f==22){ o = floor(c*4.+.5)/4.; }
+  else if(f==23){
+    o = c;
+    o.r = texture2D(uTex, p + vec2(.007,0.)).r;
+    o.b = texture2D(uTex, p - vec2(.007,0.)).b;
+    o *= .95 + .05*sin(gl_FragCoord.y*1.6);
+  }
+  else if(f==24){ o = 1. - c; }
+  return o;
+}
+
+void main(){
+  vec2 uv = vUV;
+  vec2 p = uv;
+  vec2 asp = vec2(uAspect, 1.);
+
+  // ---------- 1. Деформация: глаза и нос ----------
+  for(int i=0;i<2;i++){
+    if(float(i) >= uNFaces) break;
+    vec2 rot = uRot[i];
+    if(abs(uEyes) > .001){
+      for(int k=0;k<2;k++){
+        vec4 e = (k==0) ? uEyeL[i] : uEyeR[i];
+        vec2 v = (uv - e.xy) * asp;
+        float d = length(v) / e.z;
+        if(d < 1.){ float f = 1. - d; p -= (uv - e.xy) * uEyes * .45 * f * f; }
+      }
+    }
+    if(abs(uNoseAmt) > .001){
+      vec4 n = uNose[i];
+      vec2 v = (uv - n.xy) * asp;
+      float hx = dot(v, rot);
+      float hy = dot(v, vec2(-rot.y, rot.x));
+      float d = length(vec2(hx/n.z, hy/n.w));
+      if(d < 1.){
+        float g = 1. - smoothstep(.35, 1., d);
+        p += (rot * (hx * uNoseAmt * .35 * g)) / asp;
+      }
+    }
+  }
+
+  vec3 c = texture2D(uTex, p).rgb;
+
+  // ---------- маски лица и рта ----------
+  float fm = (uFaceMode > .5) ? 0. : 1.;
+  float tm = 0.;
+  for(int i=0;i<2;i++){
+    if(float(i) >= uNFaces) break;
+    vec2 rot = uRot[i];
+    vec4 fe = uFaceE[i];
+    vec2 v = (uv - fe.xy) * asp;
+    float hx = dot(v, rot);
+    float hy = dot(v, vec2(-rot.y, rot.x));
+    fm = max(fm, 1. - smoothstep(.72, 1.02, length(vec2(hx/fe.z, hy/fe.w))));
+    vec4 mo = uMouth[i];
+    vec2 vm = (uv - mo.xy) * asp;
+    float mx = dot(vm, rot);
+    float my = dot(vm, vec2(-rot.y, rot.x));
+    tm = max(tm, 1. - smoothstep(.65, 1., length(vec2(mx/mo.z, my/mo.w))));
+  }
+
+  // ---------- 2. Сглаживание кожи ----------
+  if(uSmooth > .001 && fm > .01){
+    float rho = .003 + .010 * uSmooth;
+    float sg = mix(.07, .20, uSmooth);
+    vec3 sum = c; float ws = 1.;
+    for(int j=0;j<14;j++){
+      float fj = float(j) + .5;
+      float a = fj * 2.39996;
+      float r = sqrt(fj / 14.) * rho;
+      vec3 s = texture2D(uTex, p + vec2(cos(a)/uAspect, sin(a)) * r).rgb;
+      vec3 dd = s - c;
+      float w = exp(-dot(dd,dd) / (2.*sg*sg));
+      sum += s * w; ws += w;
+    }
+    vec3 sm = sum / ws;
+    float m = fm * skinP(sm) * clamp(uSmooth * 1.6, 0., 1.);
+    sm += vec3(.025) * uSmooth;
+    c = mix(c, sm, m);
+  }
+
+  // ---------- 3. Отбеливание зубов ----------
+  if(uTeeth > .001 && tm > .01){
+    float l = dot(c, vec3(.299,.587,.114));
+    float t = smoothstep(.2,.4,l) * (1. - smoothstep(.10,.26,c.r - c.g));
+    float m = tm * t * uTeeth;
+    float yel = max(0., (c.r + c.g)*.5 - c.b);
+    c.b += yel * .9 * m;
+    c = mix(c, min(c*1.12 + .02, vec3(1.)), m);
+  }
+
+  // ---------- 4. Тон ----------
+  c *= exp2(uExp);
+  c = contr(c, 1. + uCon*.6);
+  c = lumaSat(c, 1. + uSat);
+  c.r *= 1. + uWarm*.14;
+  c.b *= 1. - uWarm*.14;
+  c = clamp(c, 0., 1.);
+
+  // ---------- 5. Фильтр ----------
+  if(uFilter > 0){ c = mix(c, clamp(filt(c, uFilter, p, uv), 0., 1.), uFAmt); }
+
+  // ---------- 6. Виньетка и зерно ----------
+  if(uVig > .001){
+    float d = length((uv - .5) * asp) / length(.5 * asp);
+    c *= 1. - uVig * smoothstep(.35, 1.05, d) * .85;
+  }
+  if(uGrain > .001){
+    float n = fract(sin(dot(gl_FragCoord.xy + uTime*60., vec2(12.9898,78.233))) * 43758.5453);
+    c += (n - .5) * uGrain * .28;
+  }
+  gl_FragColor = vec4(clamp(c, 0., 1.), 1.);
+}`;
+
+const FX = { ok: false, gl: null, U: {}, gen: 0, lost: false, lastCT: -1, lastAt: 0 };
+const FACE = { ready: false, loading: false, failed: false, lm: null, feats: [], last: 0, seen: 0 };
+const FA = {
+  eyeL: new Float32Array(8), eyeR: new Float32Array(8), nose: new Float32Array(8),
+  mouth: new Float32Array(8), face: new Float32Array(8), rot: new Float32Array(4),
+};
+[FA.eyeL, FA.eyeR, FA.nose, FA.mouth, FA.face].forEach((a) => a.fill(1));
+FA.rot.set([1, 0, 1, 0]);
+
+function initFx() {
+  try {
+    const gl = els.fxCanvas.getContext('webgl', {
+      alpha: false, antialias: false, depth: false, stencil: false,
+      preserveDrawingBuffer: true, powerPreference: 'high-performance',
+    });
+    if (!gl) throw new Error('WebGL недоступен');
+    const mk = (type, src) => {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+      return s;
+    };
+    const pr = gl.createProgram();
+    gl.attachShader(pr, mk(gl.VERTEX_SHADER, FX_VS));
+    gl.attachShader(pr, mk(gl.FRAGMENT_SHADER, FX_FS));
+    gl.linkProgram(pr);
+    if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(pr));
+    gl.useProgram(pr);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(pr, 'aPos');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+    const tex = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+    ['uTex','uAspect','uTime','uFaceMode','uNFaces','uEyeL','uEyeR','uNose','uMouth','uFaceE','uRot',
+     'uSmooth','uTeeth','uNoseAmt','uEyes','uExp','uCon','uSat','uWarm','uVig','uGrain','uFilter','uFAmt'
+    ].forEach((n) => { FX.U[n] = gl.getUniformLocation(pr, n); });
+    gl.uniform1i(FX.U.uTex, 0);
+    FX.gl = gl; FX.ok = true; FX.lost = false;
+  } catch (e) {
+    console.error('Эффекты недоступны:', e);
+    FX.ok = false;
+  }
+}
+
+function fxResize(w, h) {
+  const c = els.fxCanvas;
+  if (c.width === w && c.height === h) return false;
+  c.width = w; c.height = h;
+  FX.gl.viewport(0, 0, w, h);
+  return true;
+}
+
+function fxFps() {
+  const f = Math.round((state.settings && state.settings.frameRate) || 30);
+  return clamp(f, 15, 60);
+}
+function makeFxOut() { return els.fxCanvas.captureStream(fxFps()); }
+
+// Источник кадра для фото и Motion Blur: обработанный канвас (или сырое видео, если WebGL нет)
+function fxSource() { return FX.ok ? els.fxCanvas : els.video; }
+
+function setupFxOutput() {
+  if (!FX.ok) { state.outStream = state.stream; els.app.classList.remove('fx'); return; }
+  const v = els.video;
+  fxResize(v.videoWidth, v.videoHeight);
+  state.outStream = makeFxOut();
+  els.app.classList.add('fx');
+  FX.lastCT = -1;
+  fxRender();
+  startFxLoop();
+}
+function rebuildFxOutput() {
+  if (!state.stream) return;
+  const old = state.outStream;
+  state.outStream = makeFxOut();
+  if (old && old !== state.stream) stopStream(old);
+  if (state.live && buffer.running) { buffer.stop(); startBuffer(); }
+}
+
+function startFxLoop() {
+  const my = ++FX.gen;
+  const step = () => {
+    if (my !== FX.gen || !FX.ok || !state.stream) return;
+    fxRender();
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+function stopFxLoop() { FX.gen++; }
+
+function computeFeat(lm, asp) {
+  const d = (a, b) => Math.hypot((a.x - b.x) * asp, a.y - b.y);
+  const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  let eA = lm.length > 473 ? lm[468] : mid(lm[33], lm[133]);
+  let eB = lm.length > 473 ? lm[473] : mid(lm[362], lm[263]);
+  if (eA.x > eB.x) { const t = eA; eA = eB; eB = t; }
+  const eyeW = (d(lm[33], lm[133]) + d(lm[362], lm[263])) / 2;
+  const nm = mid(lm[129], lm[358]);
+  const nc = { x: nm.x * .6 + lm[1].x * .4, y: nm.y * .6 + lm[1].y * .4 };
+  const nhw = d(lm[129], lm[358]) / 2;
+  const mc = mid(lm[13], lm[14]);
+  const fc = {
+    x: (lm[10].x + lm[152].x + lm[234].x + lm[454].x) / 4,
+    y: (lm[10].y + lm[152].y + lm[234].y + lm[454].y) / 4,
+  };
+  const roll = Math.atan2(eB.y - eA.y, (eB.x - eA.x) * asp);
+  return [
+    eA.x, eA.y, eB.x, eB.y, Math.max(eyeW * 1.3, .01),          // 0..4  глаза
+    nc.x, nc.y, Math.max(nhw * 1.9, .01), Math.max(nhw * 2.1, .01), // 5..8  нос
+    mc.x, mc.y, Math.max(d(lm[78], lm[308]) / 2 * .9, .001),    // 9..11 рот
+    Math.max(d(lm[13], lm[14]) / 2 * 1.15 + .002, .001),        // 12
+    fc.x, fc.y, d(lm[234], lm[454]) / 2 * 1.05, d(lm[10], lm[152]) / 2 * 1.05, // 13..16 овал лица
+    roll,                                                        // 17
+  ];
+}
+
+function detectFace(now) {
+  if (!FACE.ready) return;
+  const F = state.fx;
+  if (!(F.smooth || F.teeth || F.nose || F.eyes)) { FACE.feats = []; return; }
+  if (now - FACE.last < 45) return;
+  FACE.last = now;
+  const v = els.video;
+  let res;
+  try { res = FACE.lm.detectForVideo(v, now); } catch (e) { console.error(e); return; }
+  const asp = v.videoWidth / v.videoHeight;
+  const list = (res && res.faceLandmarks) || [];
+  if (list.length) {
+    FACE.seen = now;
+    const n = Math.min(2, list.length);
+    for (let i = 0; i < n; i++) {
+      const f = computeFeat(list[i], asp), p = FACE.feats[i];
+      FACE.feats[i] = p ? f.map((x, k) => p[k] + (x - p[k]) * .6) : f;   // сглаживаем дрожание точек
+    }
+    FACE.feats.length = n;
+  } else if (now - FACE.seen > 300) {
+    FACE.feats = [];
+  }
+}
+
+function fxRender() {
+  if (!FX.ok || FX.lost) return;
+  const v = els.video;
+  if (!state.stream || v.readyState < 2 || !v.videoWidth) return;
+  const now = performance.now();
+  if (v.currentTime === FX.lastCT && now - FX.lastAt < 40) return;   // нового кадра нет
+  FX.lastCT = v.currentTime; FX.lastAt = now;
+
+  const gl = FX.gl, w = v.videoWidth, h = v.videoHeight, U = FX.U, F = state.fx;
+  if (fxResize(w, h)) rebuildFxOutput();
+  detectFace(now);
+
+  try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, v); } catch { return; }
+
+  const n = Math.min(2, FACE.feats.length);
+  for (let i = 0; i < n; i++) {
+    const f = FACE.feats[i], o = i * 4;
+    FA.eyeL.set([f[0], f[1], f[4], 0], o);
+    FA.eyeR.set([f[2], f[3], f[4], 0], o);
+    FA.nose.set([f[5], f[6], f[7], f[8]], o);
+    FA.mouth.set([f[9], f[10], f[11], f[12]], o);
+    FA.face.set([f[13], f[14], f[15], f[16]], o);
+    FA.rot[i * 2] = Math.cos(f[17]); FA.rot[i * 2 + 1] = Math.sin(f[17]);
+  }
+
+  gl.uniform1f(U.uAspect, w / h);
+  gl.uniform1f(U.uTime, (now / 1000) % 100);
+  gl.uniform1f(U.uFaceMode, FACE.ready ? 1 : 0);
+  gl.uniform1f(U.uNFaces, n);
+  gl.uniform4fv(U.uEyeL, FA.eyeL); gl.uniform4fv(U.uEyeR, FA.eyeR);
+  gl.uniform4fv(U.uNose, FA.nose); gl.uniform4fv(U.uMouth, FA.mouth); gl.uniform4fv(U.uFaceE, FA.face);
+  gl.uniform2fv(U.uRot, FA.rot);
+  gl.uniform1f(U.uSmooth, F.smooth / 100); gl.uniform1f(U.uTeeth, F.teeth / 100);
+  gl.uniform1f(U.uNoseAmt, F.nose / 100); gl.uniform1f(U.uEyes, F.eyes / 100);
+  gl.uniform1f(U.uExp, F.exp / 100); gl.uniform1f(U.uCon, F.con / 100);
+  gl.uniform1f(U.uSat, F.sat / 100); gl.uniform1f(U.uWarm, F.warm / 100);
+  gl.uniform1f(U.uVig, F.vig / 100); gl.uniform1f(U.uGrain, F.grain / 100);
+  gl.uniform1i(U.uFilter, F.filter | 0); gl.uniform1f(U.uFAmt, F.amt / 100);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+// ---- Модель лица (MediaPipe) — грузится один раз, когда нужна ----
+async function ensureFace() {
+  if (FACE.ready || FACE.loading || FACE.failed || !FX.ok) return;
+  FACE.loading = true; updateFaceNote();
+  toast('Загружаю модель распознавания лица…', 2500);
+  try {
+    const base = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+    const mod = await import(base + '/vision_bundle.mjs');
+    const fs = await mod.FilesetResolver.forVisionTasks(base + '/wasm');
+    const mk = (delegate) => mod.FaceLandmarker.createFromOptions(fs, {
+      baseOptions: {
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+        delegate,
+      },
+      runningMode: 'VIDEO', numFaces: 2,
+    });
+    try { FACE.lm = await mk('GPU'); } catch { FACE.lm = await mk('CPU'); }
+    FACE.ready = true;
+    toast('Распознавание лица готово', 1500);
+  } catch (e) {
+    console.error('Модель лица не загрузилась', e);
+    FACE.failed = true;
+    toast('Не удалось загрузить модель лица (нужен интернет) — сглаживание работает по цвету кожи', 4200);
+  }
+  FACE.loading = false; updateFaceNote();
+}
+const faceStatus = () => FACE.ready ? 'Лицо распознаётся — эффекты применяются к лицу в кадре.'
+  : FACE.loading ? 'Загружаю модель распознавания лица…'
+  : FACE.failed ? 'Модель лица не загрузилась: работает только сглаживание по цвету кожи.'
+  : 'Модель лица загрузится при первом использовании ползунков.';
+function updateFaceNote() { const el = $('faceNote'); if (el) el.textContent = faceStatus(); }
+
+// ---- Интерфейс панели эффектов ----
+let fxTab = 'filters';
+const saveFx = () => store.set('fx', state.fx);
+const fxActive = () => { const F = state.fx; return !!(F.filter || F.smooth || F.teeth || F.nose || F.eyes || F.exp || F.con || F.sat || F.warm || F.vig || F.grain); };
+const updateFxBtn = () => els.fxBtn.classList.toggle('active', fxActive());
+const fmtV = (v, min) => (min < 0 && v > 0 ? '+' : '') + v;
+
+function paintRange(r) {
+  const min = +r.min, max = +r.max, v = +r.value;
+  const z = (0 - min) / (max - min) * 100, p = (v - min) / (max - min) * 100;
+  const a = Math.min(z, p), b = Math.max(z, p);
+  r.style.setProperty('--trk', 'linear-gradient(to right,rgba(255,255,255,.25) ' + a + '%,var(--yellow) ' + a + '%,var(--yellow) ' + b + '%,rgba(255,255,255,.25) ' + b + '%)');
+}
+function sliderHtml(k, label, min, max, hint) {
+  const v = state.fx[k];
+  return '<div class="sl"><div class="sl-h"><b>' + label + '</b><em data-v="' + k + '">' + fmtV(v, min) + '</em></div>'
+    + '<input type="range" min="' + min + '" max="' + max + '" step="1" value="' + v + '" data-k="' + k + '" aria-label="' + label + '">'
+    + (hint ? '<small>' + hint + '</small>' : '') + '</div>';
+}
+function renderFxTab() {
+  const B = els.fxBody;
+  if (fxTab === 'filters') {
+    B.innerHTML = '<div class="chips">' + FX_LIST.map((f, i) =>
+      '<button class="chip' + (state.fx.filter === i ? ' on' : '') + '" data-f="' + i + '" style="--sw:' + f[1] + '"><i></i><span>' + f[0] + '</span></button>'
+    ).join('') + '</div>' + sliderHtml('amt', 'Интенсивность фильтра', 0, 100);
+  } else {
+    B.innerHTML = (fxTab === 'face' ? '<p class="fxnote" id="faceNote"></p>' : '')
+      + FX_SL[fxTab].map((s) => sliderHtml(s[0], s[1], s[2], s[3], s[4])).join('');
+    updateFaceNote();
+  }
+  B.querySelectorAll('input[type=range]').forEach(paintRange);
+  const on = B.querySelector('.chip.on');
+  if (on && on.scrollIntoView) { try { on.scrollIntoView({ inline: 'center', block: 'nearest' }); } catch {} }
+}
+function buildFxUi() {
+  els.fxBtn.addEventListener('click', () => {
+    const open = !els.fxPanel.classList.contains('open');
+    els.fxPanel.classList.toggle('open', open);
+    els.fxPanel.setAttribute('aria-hidden', String(!open));
+    if (open) renderFxTab();
+  });
+  els.fxTabs.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    fxTab = b.dataset.t;
+    els.fxTabs.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+    renderFxTab();
+    if (fxTab === 'face') ensureFace();
+  });
+  els.fxBody.addEventListener('input', (e) => {
+    const r = e.target.closest('input[type=range]'); if (!r) return;
+    const k = r.dataset.k;
+    state.fx[k] = +r.value; paintRange(r);
+    const em = els.fxBody.querySelector('[data-v="' + k + '"]');
+    if (em) em.textContent = fmtV(+r.value, +r.min);
+    saveFx(); updateFxBtn();
+    if (FACE_KEYS.includes(k) && +r.value) ensureFace();
+  });
+  els.fxBody.addEventListener('click', (e) => {
+    const c = e.target.closest('.chip'); if (!c) return;
+    state.fx.filter = +c.dataset.f;
+    els.fxBody.querySelectorAll('.chip').forEach((x) => x.classList.toggle('on', x === c));
+    saveFx(); updateFxBtn();
+  });
+  els.fxBody.addEventListener('dblclick', (e) => {       // двойной клик по ползунку — сброс
+    const r = e.target.closest('input[type=range]'); if (!r) return;
+    r.value = FXDEF[r.dataset.k];
+    r.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  els.fxReset.addEventListener('click', () => {
+    const keys = fxTab === 'filters' ? ['filter', 'amt'] : FX_SL[fxTab].map((s) => s[0]);
+    keys.forEach((k) => { state.fx[k] = FXDEF[k]; });
+    saveFx(); updateFxBtn(); renderFxTab();
+    toast('Сброшено', 1000);
+  });
+  els.fxCanvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); FX.lost = true; });
+  els.fxCanvas.addEventListener('webglcontextrestored', () => {
+    initFx();
+    els.app.classList.toggle('fx', FX.ok && !!state.stream);
+    if (FX.ok && state.stream) startFxLoop();
+  });
+  updateFxBtn();
+}
+
+/* ==========================================================
    Камера
    ========================================================== */
 function envProblem() {
@@ -710,6 +1321,8 @@ async function attach(stream, gen) {
   state.mirror = s.facingMode ? s.facingMode === 'user' : state.facing === 'user';
   els.video.classList.toggle('mirror', state.mirror);
   els.mblurCanvas.classList.toggle('mirror', state.mirror);
+  els.fxCanvas.classList.toggle('mirror', state.mirror);
+  setupFxOutput();                                  // WebGL-канвас + поток для Live Photo
   if (state.motionBlur) startMotionBlur();
 
   startBuffer();
@@ -721,23 +1334,28 @@ async function attach(stream, gen) {
 
 function stopCamera() {
   stopMotionBlur();
+  stopFxLoop();
   buffer.stop();
+  if (state.outStream && state.outStream !== state.stream) stopStream(state.outStream);
+  state.outStream = null;
   if (state.track) state.track.removeEventListener('ended', onTrackEnded);
   stopStream(state.stream);
   state.stream = null; state.track = null;
   els.video.srcObject = null;
+  els.app.classList.remove('fx');
   updateLiveState();
 }
 
 function onTrackEnded() {
   buffer.stop();
+  stopFxLoop();
   state.stream = null; state.lost = true;
   showGate({ title: 'Камера отключена', text: 'Поток остановлен: камеру отключили или её занял другой процесс.', button: 'Включить снова' });
 }
 
 function startBuffer() {
   if (!state.live || !state.liveSupported || !state.stream) return;
-  if (!buffer.start(state.stream)) { state.liveSupported = false; }
+  if (!buffer.start(state.outStream || state.stream)) { state.liveSupported = false; }
 }
 
 function explainError(err) {
@@ -858,7 +1476,7 @@ function sizeMotionBlurCanvas() {
 function motionBlurTick() {
   if (!state.motionBlur || !state.stream || !sizeMotionBlurCanvas()) { mblurRaf = 0; return; }
   mblurCtx.globalAlpha = CFG.MBLUR_ALPHA;
-  mblurCtx.drawImage(els.video, 0, 0, els.mblurCanvas.width, els.mblurCanvas.height);
+  mblurCtx.drawImage(fxSource(), 0, 0, els.mblurCanvas.width, els.mblurCanvas.height);
   mblurRaf = requestAnimationFrame(motionBlurTick);
 }
 
@@ -866,7 +1484,7 @@ function startMotionBlur() {
   if (mblurRaf || !state.stream || !sizeMotionBlurCanvas()) return;
   if (!mblurCtx) mblurCtx = els.mblurCanvas.getContext('2d', { alpha: false });
   mblurCtx.globalAlpha = 1;                                  // затравка: без неё первый кадр проступает из чёрного
-  mblurCtx.drawImage(els.video, 0, 0, els.mblurCanvas.width, els.mblurCanvas.height);
+  mblurCtx.drawImage(fxSource(), 0, 0, els.mblurCanvas.width, els.mblurCanvas.height);
   mblurRaf = requestAnimationFrame(motionBlurTick);
 }
 
@@ -905,7 +1523,7 @@ async function shoot() {
 
   const t = performance.now();                       // момент затвора для кольцевого буфера
   const w = video.videoWidth, h = video.videoHeight; // максимальное разрешение потока
-  const source = (state.motionBlur && mblurCtx && els.mblurCanvas.width === w) ? els.mblurCanvas : video;
+  const source = (state.motionBlur && mblurCtx && els.mblurCanvas.width === w) ? els.mblurCanvas : fxSource();
   const canvas = document.createElement('canvas');
   canvas.width = w; canvas.height = h;
   canvas.getContext('2d', { alpha: false }).drawImage(source, 0, 0, w, h);
@@ -1376,6 +1994,8 @@ function fillInfo() {
     ['Кодек', !state.liveSupported ? 'не поддерживается' : (buffer.mime ? codecLabel(buffer.mime) : '—')],
     ['Битрейт', (CFG.BITRATE / 1e6) + ' Мбит/с'],
     ['Буфер Live Photo', '−' + (CFG.PRE_MS / 1000) + ' с / +' + (CFG.POST_MS / 1000) + ' с'],
+    ['Эффекты', FX.ok ? 'WebGL' : 'недоступны'],
+    ['Распознавание лица', FACE.ready ? 'готово' : FACE.failed ? 'ошибка загрузки' : FACE.loading ? 'загрузка…' : 'не загружено'],
   ];
   els.info.innerHTML = rows.map((r) => '<div><dt>' + r[0] + '</dt><dd>' + r[1] + '</dd></div>').join('');
 }
@@ -1413,6 +2033,7 @@ els.fitSwitch.addEventListener('change', () => {
   state.fill = els.fitSwitch.checked; store.set('fill', state.fill);
   els.video.classList.toggle('fill', state.fill);
   els.mblurCanvas.classList.toggle('fill', state.fill);
+  els.fxCanvas.classList.toggle('fill', state.fill);
 });
 els.liveSwitch.addEventListener('change', () => setLive(els.liveSwitch.checked));
 els.mblurSwitch.addEventListener('change', () => setMotionBlur(els.mblurSwitch.checked));
@@ -1422,7 +2043,12 @@ els.envTry.addEventListener('click', () => { els.env.classList.remove('show'); s
 els.env.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', () => copyText(b.dataset.copy, b)));
 
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { if (els.sheet.classList.contains('open')) closeSheet(); else if (V.open) closeViewer(); return; }
+  if (e.key === 'Escape') {
+    if (els.sheet.classList.contains('open')) closeSheet();
+    else if (V.open) closeViewer();
+    else if (els.fxPanel.classList.contains('open')) els.fxBtn.click();
+    return;
+  }
   if (V.open) {
     if (e.key === 'ArrowLeft') showShot(V.i - 1);
     else if (e.key === 'ArrowRight') showShot(V.i + 1);
@@ -1434,6 +2060,7 @@ window.addEventListener('keydown', (e) => {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { buffer.stop(); stopMotionBlur(); return; }
   if (state.lost) { startCamera(); return; }
+  if (FX.ok && state.stream) startFxLoop();
   if (state.stream && state.track && state.track.readyState === 'live') startBuffer();
   if (state.motionBlur) startMotionBlur();
 });
@@ -1442,8 +2069,13 @@ document.addEventListener('visibilitychange', () => {
    Запуск
    ========================================================== */
 function boot() {
+  initFx();
+  buildFxUi();
+  if (!FX.ok) { els.fxBtn.style.display = 'none'; toast('Фильтры недоступны: браузер не поддерживает WebGL', 4000); }
+  else if (FACE_KEYS.some((k) => state.fx[k])) ensureFace();
   els.video.classList.toggle('fill', state.fill);
   els.mblurCanvas.classList.toggle('fill', state.fill);
+  els.fxCanvas.classList.toggle('fill', state.fill);
   els.mblurCanvas.classList.toggle('on', state.motionBlur);
   syncSheet();
   updateLiveState();
